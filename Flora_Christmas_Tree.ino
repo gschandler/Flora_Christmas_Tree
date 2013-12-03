@@ -7,9 +7,11 @@
 #define  PIN  6
 #define  NUM_PIXELS  8
 
+//
 Adafruit_NeoPixel strip = Adafruit_NeoPixel(NUM_PIXELS, PIN, NEO_GRB + NEO_KHZ800);
 Adafruit_LSM303  lsm;
 
+// convenience definitions
 uint32_t  kRedColor = Adafruit_NeoPixel::Color(255,0,0);
 uint32_t  kGreenColor = Adafruit_NeoPixel::Color(0,255,0);
 uint32_t  kBlueColor = Adafruit_NeoPixel::Color(0,0,255);
@@ -19,14 +21,11 @@ uint32_t  kMagentaColor = Adafruit_NeoPixel::Color(255,0,255);
 uint32_t  kYellowColor = Adafruit_NeoPixel::Color(255,255,0);
 uint32_t  kCyanColor = Adafruit_NeoPixel::Color(0,255,255);
 
+// some macros that help out
 #define  LAST_PIXEL  (strip.numPixels()-1)
 #define  ACCEL_CLAMP255(v)  (ClampValue(abs(v), max_accel, 255.0))
 
-void colorWipe(uint32_t, uint8_t);
-void rainbowCycle(uint8_t);
-void rainbow(uint8_t);
-uint32_t Wheel(byte);
-
+// Dispatch table for function pointers to make changing our behavior easy
 typedef void (*DispatchFunc)(void);
 
 DispatchFunc  dispatchTable[] = {
@@ -34,17 +33,13 @@ DispatchFunc  dispatchTable[] = {
   &RainbowLights,
   &RedAndGreenLights
 };
-
-typedef enum {
-  kLoopTest = 0,
-  kLoopRun
-} LoopState;
-
-LoopState loopState = kLoopTest;
-
-int  dispatchIndex = 0;
+DispatchFunc  currentDispatchFunc = NULL;
 const int  kMaxDispatchIndex = (sizeof(dispatchTable)/sizeof(DispatchFunc)) - 1;
-void  SetupDispatchIndex()
+
+//
+//
+//
+void  InitializeDispatchTable()
 {
   // read from EEPROM to see what dispatch entry we are using
   uint8_t val = EEPROM.read(0);
@@ -52,57 +47,68 @@ void  SetupDispatchIndex()
     val = 0;
   }
 
-  dispatchIndex = val;
+  currentDispatchFunc = dispatchTable[val];
   
   if ( ++val > kMaxDispatchIndex ) val = 0;
   EEPROM.write(0,val);
 
 }
 
+//
+//  Standard Arduino setup
+//
 void setup() {
   // set up serial for debugging
     Serial.begin(9600);
-
-  // begin NeoPixel stuff
-  strip.begin();
-  strip.show(); // Initialize all pixels to 'off'
   
   // start up LM303
-  if ( !lsm.begin() ) {
-    Serial.println("Unable to initialize the LSM303!");
-  }
-
-  SetupDispatchIndex();
+  InitializeLM303();
   
-  loopState = kLoopTest;
+   // begin NeoPixel stuff
+  InitializeNeoPixels();
+ 
+  InitializeDispatchTable();
+
+  
+   // signal begining of start up (flash 5 times), test the pixels, than signal end of test (flash 10 times)
+  FlashNeoPixel(kWhiteColor,LAST_PIXEL,5,100);
+  TestNeoPixels();
+  FlashDispatchIndexInLastPixel();
 }
 
 float max_accel = 0;
 
+//
+//  Standard Arduino loop
+//
 void loop() {
-  switch ( loopState ) {
-    case kLoopTest: {
-       // signal begining of start up (flash 5 times), test the pixels, than signal end of test (flash 10 times)
-      FlashNeoPixel(kWhiteColor,LAST_PIXEL,5,100);
-      TestNeoPixels();
-      FlashDispatchIndexInLastPixel();
-      loopState = kLoopRun;
-   }
-    break;
+    // load accelerometer data and continue to refine the maximum acceleration global
+    lsm.read();
+    max_accel = max(max_accel,max(lsm.accelData.x,max(lsm.accelData.y,lsm.accelData.z)));
     
-    case kLoopRun : {
-      // load accelerometer data and continue to refine the maximum acceleration global
-      lsm.read();
-      max_accel = max(max_accel,max(lsm.accelData.x,max(lsm.accelData.y,lsm.accelData.z)));
-      
-      DispatchFunc func = dispatchTable[dispatchIndex];
-      if ( func ) {
-        func();
-      }  
-    }
-    break;
+    if ( currentDispatchFunc ) {
+      currentDispatchFunc();
+    }  
+}
+
+//
+//
+//
+void  InitializeLM303()
+{
+  if ( !lsm.begin() ) {
+    Serial.println("Unable to initialize the LSM303!");
   }
-  
+}
+
+//
+//
+//
+void  InitializeNeoPixels()
+{
+  // begin NeoPixel stuff
+  strip.begin();
+  strip.show(); // Initialize all pixels to 'off'
 }
 
 //
@@ -112,12 +118,22 @@ void  FlashDispatchIndexInLastPixel()
 {
   FlashNeoPixel(kWhiteColor,LAST_PIXEL,5,100);
   delay(200);
-  FlashNeoPixel(kYellowColor,LAST_PIXEL,dispatchIndex+1,200);
+  
+  // flash our "star" the index of the current dispatch function
+  int  flashCount = 0;
+  while ( dispatchTable[flashCount++] != currentDispatchFunc && flashCount<kMaxDispatchIndex ) {
+  }
+  
+  // we found a valid index into our dispatch table...
+  if ( flashCount < kMaxDispatchIndex ) {
+    FlashNeoPixel(kYellowColor,LAST_PIXEL,flashCount,200);
+  }
+  // ...however, if we didn't, we'll signal with a red flashes
+  else {
+    FlashNeoPixel(kRedColor,LAST_PIXEL, flashCount, 500 );
+  }
   delay(200);
   FlashNeoPixel(kWhiteColor,LAST_PIXEL,5,100);
-  
-  Serial.print("Running program index: "); Serial.println(dispatchIndex);
-
 }
 
 //
