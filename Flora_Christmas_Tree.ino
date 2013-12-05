@@ -5,6 +5,7 @@
 #include <Adafruit_NeoPixel.h>
 
 #define  PIN  6
+#define  LED  7
 #define  NUM_PIXELS  8
 
 //
@@ -58,6 +59,8 @@ void  InitializeDispatchTable()
 //  Standard Arduino setup
 //
 void setup() {
+  pinMode(LED,OUTPUT);
+  
   // set up serial for debugging
     Serial.begin(9600);
   
@@ -82,6 +85,9 @@ float max_accel = 0;
 //  Standard Arduino loop
 //
 void loop() {
+    float time = millis();
+    digitalWrite(LED,HIGH);
+
     // load accelerometer data and continue to refine the maximum acceleration global
     lsm.read();
     max_accel = max(max_accel,max(lsm.accelData.x,max(lsm.accelData.y,lsm.accelData.z)));
@@ -89,6 +95,13 @@ void loop() {
     if ( currentDispatchFunc ) {
       currentDispatchFunc();
     }  
+    
+    float interval = max(0.0,200 - (millis() - time));
+    delay(interval);
+    
+    digitalWrite(LED,LOW);
+    
+    delay(200);
 }
 
 //
