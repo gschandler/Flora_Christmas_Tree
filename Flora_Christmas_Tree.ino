@@ -34,8 +34,10 @@ DispatchFunc  dispatchTable[] = {
   &RainbowLights,
   &RedAndGreenLights
 };
-DispatchFunc  currentDispatchFunc = NULL;
-const int  kMaxDispatchIndex = (sizeof(dispatchTable)/sizeof(DispatchFunc)) - 1;
+
+int  currentDispatchFuncIndex = 0;
+const int kDispatchFuncCount = sizeof(dispatchTable)/sizeof(DispatchFunc);
+const int  kMaxDispatchIndex = kDispatchFuncCount - 1;
 
 //
 //
@@ -47,10 +49,11 @@ void  InitializeDispatchTable()
   if ( val == 255 ) {  // initial state
     val = 0;
   }
-
-  currentDispatchFunc = dispatchTable[val];
   
   if ( ++val > kMaxDispatchIndex ) val = 0;
+  
+  currentDispatchFuncIndex = val;
+  
   EEPROM.write(0,val);
 
 }
@@ -65,7 +68,7 @@ void setup() {
     Serial.begin(9600);
   
   // start up LM303
-  InitializeLM303();
+  InitializeAccelerometer();
   
    // begin NeoPixel stuff
   InitializeNeoPixels();
@@ -88,13 +91,9 @@ void loop() {
     float time = millis();
     digitalWrite(LED,HIGH);
 
-    // load accelerometer data and continue to refine the maximum acceleration global
-    lsm.read();
-    max_accel = max(max_accel,max(lsm.accelData.x,max(lsm.accelData.y,lsm.accelData.z)));
+    ReadAccelerometer();
     
-    if ( currentDispatchFunc ) {
-      currentDispatchFunc();
-    }  
+    dispatchTable[currentDispatchFuncIndex]();
     
     float interval = max(0.0,200 - (millis() - time));
     delay(interval);
@@ -107,12 +106,45 @@ void loop() {
 //
 //
 //
-void  InitializeLM303()
+Adafruit_LSM303::lsm303AccelData  lastAccelData;
+
+//
+//
+//
+Adafruit_LSM303::lsm303AccelData  FilterAccelerometerData( const Adafruit_LSM303::lsm303AccelData &past, const Adafruit_LSM303::lsm303AccelData &present, float alpha )
+{
+  Adafruit_LSM303::lsm303AccelData data;
+  data.x = alpha * past.x + (1.0 - alpha) * present.x;
+  data.y = alpha * past.y + (1.0 - alpha) * present.y;
+  data.z = alpha * past.z + (1.0 - alpha) * present.z;
+  
+  return data;
+}
+
+//
+//
+//
+void  InitializeAccelerometer()
 {
   if ( !lsm.begin() ) {
     Serial.println("Unable to initialize the LSM303!");
   }
+  lsm.read();
+  lastAccelData = lsm.accelData;
 }
+
+//
+//
+//
+void  ReadAccelerometer()
+{
+    lastAccelData = lsm.accelData;
+    
+    // load accelerometer data and continue to refine the maximum acceleration global
+    lsm.read();
+    max_accel = max(max_accel,max(lsm.accelData.x,max(lsm.accelData.y,lsm.accelData.z)));
+}
+
 
 //
 //
@@ -124,6 +156,7 @@ void  InitializeNeoPixels()
   strip.show(); // Initialize all pixels to 'off'
 }
 
+
 //
 //
 //
@@ -133,18 +166,8 @@ void  FlashDispatchIndexInLastPixel()
   delay(200);
   
   // flash our "star" the index of the current dispatch function
-  int  flashCount = 0;
-  while ( dispatchTable[flashCount++] != currentDispatchFunc && flashCount<kMaxDispatchIndex ) {
-  }
-  
-  // we found a valid index into our dispatch table...
-  if ( flashCount < kMaxDispatchIndex ) {
-    FlashNeoPixel(kYellowColor,LAST_PIXEL,flashCount,200);
-  }
-  // ...however, if we didn't, we'll signal with a red flashes
-  else {
-    FlashNeoPixel(kRedColor,LAST_PIXEL, flashCount, 500 );
-  }
+  FlashNeoPixel(kYellowColor,LAST_PIXEL,currentDispatchFuncIndex,200);
+
   delay(200);
   FlashNeoPixel(kWhiteColor,LAST_PIXEL,5,100);
 }
@@ -226,7 +249,8 @@ float  ClampValue( float value, float maxValue, float clampValue)
 //
 void  WhiteLights()
 {
-    Adafruit_LSM303::lsm303AccelData accel = lsm.accelData;
+  
+    Adafruit_LSM303::lsm303AccelData accel = FilterAccelerometerData( lastAccelData, lsm.accelData, 0.2 );
     float components[] = {ACCEL_CLAMP255(accel.x), ACCEL_CLAMP255(accel.y), ACCEL_CLAMP255(accel.z)};
     for ( int i=0;i<strip.numPixels();++i ) {
       float c = components[i%3];
@@ -242,8 +266,8 @@ void  WhiteLights()
 //
 void  RainbowLights()
 {
-    Adafruit_LSM303::lsm303AccelData accel = lsm.accelData;
-    float r = ClampValue(abs(accel.x),max_accel,255.0), g = ClampValue(abs(accel.y),max_accel,255.0), b = ClampValue(abs(accel.z),max_accel,255.0);
+    Adafruit_LSM303::lsm303AccelData accel = FilterAccelerometerData( lastAccelData, lsm.accelData, 0.2 );
+    float r = ACCEL_CLAMP255(accel.x), g = ACCEL_CLAMP255(accel.y), b = ACCEL_CLAMP255(accel.z);
     
     for ( int i=0;i<strip.numPixels();++i ) {
       strip.setPixelColor(i,Adafruit_NeoPixel::Color(byte(r),byte(g),byte(b)));
@@ -257,8 +281,8 @@ void  RainbowLights()
 //
 void  RedAndGreenLights()
 {
-    Adafruit_LSM303::lsm303AccelData accel = lsm.accelData;
-    float r = ClampValue(abs(accel.x),max_accel,255.0), g = ClampValue(abs(accel.y),max_accel,255.0);
+    Adafruit_LSM303::lsm303AccelData accel = FilterAccelerometerData( lastAccelData, lsm.accelData, 0.2 );
+    float r = ACCEL_CLAMP255(accel.x), g = ACCEL_CLAMP255(accel.y);
     
     for ( int i=0;i<strip.numPixels()-1;++i ) {
       uint32_t color = (i%2) ? Adafruit_NeoPixel::Color(0,byte(g),0) : Adafruit_NeoPixel::Color(byte(r),0,0);
