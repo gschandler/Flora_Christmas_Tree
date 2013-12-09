@@ -110,6 +110,8 @@ enum {
 
 static ChristmasTree *tree = NULL;
 
+//#define  TESTING  kChristmasTreeRainbowLights
+
 void CreateChristmasTree()
 {
     // read from EEPROM to see what dispatch entry we are using
@@ -117,16 +119,23 @@ void CreateChristmasTree()
   if ( val == 255 ) {  // initial state
     val = 0;
   }
-    
+
+  int program = val;
+#ifdef TESTING
+  program = TESTING;
+#endif
+
+  val = (val+1) % kChristmasTreeCount;
+  EEPROM.write(0,val);
+  
   ChristmasTree *ct = NULL;
-  switch ( kChristmasTreeRainbowLights ) {
+
+  switch ( program ) {
     case kChristmasTreeWhiteLights : ct = new WhiteLightsChristmasTree(NUM_PIXELS,PIN); break;
     case kChristmasTreeRainbowLights : ct = new RainbowLightsChristmasTree(NUM_PIXELS,PIN); break;
     case kChristmasTreeRedAndGreenLights : ct = new RedAndGreenLightsChristmasTree(NUM_PIXELS,PIN); break;
   }
 
-  val = (val+1) % kChristmasTreeCount;
-  EEPROM.write(0,val);
 
   if ( ct ) {
     tree = ct;
