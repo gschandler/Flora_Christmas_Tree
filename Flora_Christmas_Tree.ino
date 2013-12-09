@@ -14,22 +14,25 @@ class ChristmasTree
     ChristmasTree( int numberOfLignts = 1, int pin = 6 );
     virtual ~ChristmasTree();
     
-    void    Startup(int signal=1);
+    virtual void  Startup(int signal=1);
     virtual void  Update();
     
-    void  FlashStar( uint32_t color, int count, int wait = 50 );
-    void  FlashLights( uint32_t color, int count, int wait = 50 );
-    void  FlashLight( int index, uint32_t color, int count, int wait = 50 );
+    const static int kDefaultWait;
+    
+    void  FlashStar( uint32_t color, int count, int wait = kDefaultWait );
+    void  FlashLights( uint32_t color, int count, int wait = kDefaultWait );
+    void  FlashLight( int index, uint32_t color, int count, int wait = kDefaultWait );
 
+    void  SetStarColor( uint32_t color );
     void  SetLightColor( int index, uint32_t color );
     void  ClearLight( int index );
     
     void  SetAllLightsColor( uint32_t color );
     void  ClearAllLights();
   
-    void  RainbowCycle( int wait = 50 );
-    void  ColorWipe( uint32_t c, int wait = 50);
-    void  Rainbow( int  wait = 50 );
+    void  RainbowCycle( int wait = kDefaultWait );
+    void  ColorWipe( uint32_t c, int wait = kDefaultWait);
+    void  Rainbow( int  wait = kDefaultWait );
 
     int  GetStarIndex() const  { return _strip.numPixels()-1; }
     
@@ -47,6 +50,7 @@ class ChristmasTree
     Adafruit_LSM303::lsm303AccelData    _previousAccel;
     Adafruit_LSM303                      _lsm;
     float                                _maxAccel;
+    int                                  _update;
 };
 
 class WhiteLightsChristmasTree : public ChristmasTree
@@ -54,6 +58,7 @@ class WhiteLightsChristmasTree : public ChristmasTree
   public:
     WhiteLightsChristmasTree( int numberOfLights = 1, int pin = 6 ) : ChristmasTree(numberOfLights,pin) {}
     void  Update();
+    void  Startup( int );
 };
 
 class  RainbowLightsChristmasTree : public ChristmasTree
@@ -61,6 +66,9 @@ class  RainbowLightsChristmasTree : public ChristmasTree
   public:
     RainbowLightsChristmasTree( int numberOfLights = 1, int pin = 6 ) : ChristmasTree(numberOfLights,pin) {}
     void  Update();
+    void  Startup( int );
+   private:
+       uint8_t                            *_originalPixels;
 };
 
 class  RedAndGreenLightsChristmasTree : public ChristmasTree
@@ -68,6 +76,7 @@ class  RedAndGreenLightsChristmasTree : public ChristmasTree
   public:
     RedAndGreenLightsChristmasTree( int numberOfLights = 1, int pin = 6 ) : ChristmasTree(numberOfLights,pin) {}
     void  Update();
+    void  Startup( int );
 };
 
 //
@@ -101,23 +110,23 @@ enum {
 
 static ChristmasTree *tree = NULL;
 
-void ChristmasTreeFactory()
+void CreateChristmasTree()
 {
     // read from EEPROM to see what dispatch entry we are using
   uint8_t val = EEPROM.read(0);
   if ( val == 255 ) {  // initial state
     val = 0;
   }
-  
-  if ( ++val >= kChristmasTreeCount ) val = 0;
-  EEPROM.write(0,val);
-  
+    
   ChristmasTree *ct = NULL;
-  switch ( val ) {
+  switch ( kChristmasTreeRainbowLights ) {
     case kChristmasTreeWhiteLights : ct = new WhiteLightsChristmasTree(NUM_PIXELS,PIN); break;
     case kChristmasTreeRainbowLights : ct = new RainbowLightsChristmasTree(NUM_PIXELS,PIN); break;
     case kChristmasTreeRedAndGreenLights : ct = new RedAndGreenLightsChristmasTree(NUM_PIXELS,PIN); break;
   }
+
+  val = (val+1) % kChristmasTreeCount;
+  EEPROM.write(0,val);
 
   if ( ct ) {
     tree = ct;
@@ -135,7 +144,7 @@ void setup() {
   
   // set up serial for debugging
     Serial.begin(9600);
-//    tree = ChristmasTreeFactory();
+    CreateChristmasTree();
 }
 
 //
@@ -145,7 +154,9 @@ void loop() {
     float time = millis();
     digitalWrite(LED,HIGH);
 
-    tree->Update();
+    if ( tree ) {
+        tree->Update();
+    }
     
     float interval = max(0.0,200 - (millis() - time));
     delay(interval);
@@ -222,6 +233,14 @@ void  ChristmasTree::FlashStar( uint32_t color, int count, int interval )
 //
 //
 //
+void  ChristmasTree::SetStarColor( uint32_t color )
+{
+  SetLightColor( _strip.numPixels()-1, color);
+}
+
+//
+//
+//
 void  ChristmasTree::SetLightColor( int index, uint32_t color )
 {
     if (index<0) index = 0;
@@ -246,8 +265,8 @@ void  ChristmasTree::SetAllLightsColor( uint32_t color )
 {
   for (int i=0;i<_strip.numPixels();++i) {
     _strip.setPixelColor(i,color);
+    _strip.show();
   }
-  _strip.show();
 }
 
 //
@@ -313,6 +332,9 @@ uint32_t ChristmasTree::Wheel(byte WheelPos) {
   }
 }
 
+
+const int ChristmasTree::kDefaultWait = 100;
+
 ChristmasTree::ChristmasTree( int numberOfLights, int pin ) : _strip(numberOfLights,pin,NEO_GRB + NEO_KHZ800), _maxAccel(0)
 {
 
@@ -320,11 +342,7 @@ ChristmasTree::ChristmasTree( int numberOfLights, int pin ) : _strip(numberOfLig
     Serial.println("Unable to initialize the LSM303!");
   }
   
-  _lsm.read();
-  _previousAccel = GetCurrentAccel();
   
-  _strip.begin();
-  _strip.show();
 }
 
 ChristmasTree::~ChristmasTree()
@@ -333,7 +351,13 @@ ChristmasTree::~ChristmasTree()
 
 void ChristmasTree::Startup( int signal )
 {
-  
+   _lsm.read();
+   _previousAccel = GetCurrentAccel();
+   randomSeed( long( _previousAccel.x + _previousAccel.y + _previousAccel.z) );
+   
+   _strip.begin();
+   _strip.show();
+ 
     FlashStar( kWhiteColor,5);
     
     ColorWipe(kRedColor,20);
@@ -349,7 +373,6 @@ void ChristmasTree::Startup( int signal )
     FlashStar( kYellowColor,signal);
     delay(100);
     FlashStar( kWhiteColor, 1 );
-    
 }
 
 void  ChristmasTree::Update()
@@ -359,15 +382,36 @@ void  ChristmasTree::Update()
     
     Adafruit_LSM303::lsm303AccelData  accel = GetCurrentAccel();
     _maxAccel = max(_maxAccel,max(accel.x,max(accel.y,accel.z)));
+    
+    float x = abs(accel.x), y = abs(accel.y), z = abs(accel.z);
+    
+    Serial.print("Accel X:"); Serial.println(int(x));
+    Serial.print("      Y:"); Serial.println(int(y));
+    Serial.print("      Z:"); Serial.println(int(z));
+  
+}
+
+void  WhiteLightsChristmasTree::Startup( int signal )
+{
+    ChristmasTree::Startup(signal);
+  Serial.println("White");
 }
 
 void WhiteLightsChristmasTree::Update()
 {
     ChristmasTree::Update();
     Adafruit_LSM303::lsm303AccelData accel = FilterAccelerometerData( GetPreviousAccel(), GetCurrentAccel(), 0.2 );
-    float components[] = {ACCEL_CLAMP255(accel.x,GetMaxAccel()), ACCEL_CLAMP255(accel.y,GetMaxAccel()), ACCEL_CLAMP255(accel.z,GetMaxAccel())};
+  Serial.println("White");
+
+     int x = map(int(abs(accel.x)),0,int(GetMaxAccel()),1,8) << 5, 
+    y = map(int(abs(accel.y)),0,int(GetMaxAccel()),1,8) << 5, 
+    z = map(int(abs(accel.z)),0,int(GetMaxAccel()),1,8) << 5;
+
+    Serial.print("x,y,z="); Serial.print(x); Serial.print(","); Serial.print(y); Serial.print(","); Serial.println(z);
+
+    int components[] = {x,y,z};
     for ( int i=0;i<GetStrip().numPixels();++i ) {
-      float c = components[i%3];
+      int c = components[i%3];
       uint32_t white = Adafruit_NeoPixel::Color(byte(c),byte(c),byte(c));
       
       GetStrip().setPixelColor(i,white);
@@ -375,34 +419,82 @@ void WhiteLightsChristmasTree::Update()
     GetStrip().show();
 }
 
+// -----------------------------------------------------------------------
+
+void  RainbowLightsChristmasTree::Startup( int signal )
+{
+  ChristmasTree::Startup(signal);
+ 
+   for ( int i=0;i<GetStrip().numPixels();++i ) {
+     uint8_t r = random(127,256), g = random(127,256), b = random(127,256);
+     GetStrip().setPixelColor(i,r,g,b);
+   } 
+   
+  uint8_t *pixels = GetStrip().getPixels();
+  _originalPixels = new uint8_t[3 * GetStrip().numPixels()];
+  if ( _originalPixels ) {
+    memcpy( _originalPixels, pixels, 3 * GetStrip().numPixels());
+  }
+  
+  Serial.println("Rainbow");
+}
+
 void RainbowLightsChristmasTree::Update( )
 {
     ChristmasTree::Update();
-    
+   Serial.println("Rainbow");
+  
     Adafruit_LSM303::lsm303AccelData accel = FilterAccelerometerData( GetPreviousAccel(), GetCurrentAccel(), 0.2 );
-    float r = ACCEL_CLAMP255(accel.x,GetMaxAccel()), g = ACCEL_CLAMP255(accel.y,GetMaxAccel()), b = ACCEL_CLAMP255(accel.z,GetMaxAccel());
-    
-    for ( int i=0;i<GetStrip().numPixels();++i ) {
-      GetStrip().setPixelColor(i,Adafruit_NeoPixel::Color(byte(r),byte(g),byte(b)));
-      float t = r; r = g; g = b; b = t;
-    }
-    GetStrip().show();
 
+    const int kLowMap = 0, kHighMap = 64;
+    const int kMultiplier = 256 / (kHighMap - kLowMap);
+    int adjust[] = { map(int(abs(accel.x)),0,int(GetMaxAccel()),kLowMap,kHighMap), map(int(abs(accel.y)),0,int(GetMaxAccel()),kLowMap,kHighMap), map(int(abs(accel.z)),0,int(GetMaxAccel()),kLowMap,kHighMap)};
+
+    Serial.print("x,y,z="); Serial.print(adjust[0]); Serial.print(","); Serial.print(adjust[1]); Serial.print(","); Serial.println(adjust[2]);
+
+    uint8_t *pixels = GetStrip().getPixels();
+    for ( int i=0;i<GetStrip().numPixels();++i ) {
+      int component = random(0,3);
+      pixels[i+component] = constrain(_originalPixels[i+component] + (adjust[component] * kMultiplier) - 127,0,255);
+      int t = adjust[0]; adjust[0] = adjust[1]; adjust[1] = adjust[2]; adjust[2] = t;
+      GetStrip().show();
+    }
+
+}
+
+// -----------------------------------------------------------------------
+
+void  RedAndGreenLightsChristmasTree::Startup( int signal )
+{
+    ChristmasTree::Startup(signal);
+    
+   Serial.println("Red and Green");
+   
+    SetStarColor( kWhiteColor );
 }
 
 void RedAndGreenLightsChristmasTree::Update()
 {
     ChristmasTree::Update();
+   Serial.println("Red and Green");
 
     Adafruit_LSM303::lsm303AccelData accel = FilterAccelerometerData( GetPreviousAccel(), GetCurrentAccel(), 0.2 );
-    float r = ACCEL_CLAMP255(accel.x,GetMaxAccel()), g = ACCEL_CLAMP255(accel.y,GetMaxAccel());
+   
+    int x = map(int(abs(accel.x)),0,int(GetMaxAccel()),1,8) << 5, 
+    y = map(int(abs(accel.y)),0,int(GetMaxAccel()),1,8)  << 5, 
+    z = map(int(abs(accel.z)),0,int(GetMaxAccel()),1,8) << 5;
+    
+    Serial.print("x,y,z="); Serial.print(x); Serial.print(","); Serial.print(y); Serial.print(","); Serial.println(z);
     
     for ( int i=0;i<GetStrip().numPixels()-1;++i ) {
-      uint32_t color = (i%2) ? Adafruit_NeoPixel::Color(0,byte(g),0) : Adafruit_NeoPixel::Color(byte(r),0,0);
-      GetStrip().setPixelColor(i,color);
+      if ( i % 2 ) {
+        GetStrip().setPixelColor(i,x,0,0);
+      }
+      else {
+        GetStrip().setPixelColor(i,0,y,0);
+      }
     }
 
-    GetStrip().setPixelColor(GetStrip().numPixels()-1,Adafruit_NeoPixel::Color(byte((r+g)/2.0),byte((r+g)/2.0),byte((r+g)/2.0)));
     GetStrip().show();
     
 }
